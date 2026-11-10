@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Tangkap Bintang</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      height: 100%;
+      background: #0b1026;
+      color: #fff;
+      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      overflow: hidden;
+      touch-action: none;
+    }
+    #wrap {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+    }
+    #hud {
+      width: min(480px, 94vw);
+      display: flex;
+      justify-content: space-between;
+      font-size: 18px;
+      font-weight: 600;
+    }
+    canvas {
+      width: min(480px, 94vw);
+      aspect-ratio: 3 / 4;
+      max-height: 80vh;
+      background: linear-gradient(#141c44, #0b1026);
+      border-radius: 12px;
+      box-shadow: 0 0 0 2px #2a3570;
+    }
+    #hint { font-size: 13px; opacity: .6; }
+  </style>
+</head>
+<body>
+  <div id="wrap">
+    <div id="hud">
+      <span>Skor: <b id="score">0</b></span>
+      <span>Nyawa: <b id="lives">3</b></span>
+      <span>Rekor: <b id="best">0</b></span>
+    </div>
+    <canvas id="game" width="480" height="640"></canvas>
+    <div id="hint">← → / A D atau geser jari untuk bergerak · Tangkap ⭐ hindari 💣</div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    const $score = document.getElementById('score');
+    const $lives = document.getElementById('lives');
+    const $best = document.getElementById('best');
+
+    // Rekor disimpan di localStorage (dibungkus try/catch kalau storage diblokir)
+    let best = 0;
+    try { best = Number(localStorage.getItem('tangkap-bintang-best')) || 0; } catch (e) {}
+    $best.textContent = best;
+
+    const player = { x: W / 2, y: H - 50, w: 70, h: 16, speed: 7 };
+    let items, score, lives, spawnTimer, state, keys = {};
+
+    function reset() {
+      items = [];
+      score = 0;
+      lives = 3;
+      spawnTimer = 0;
+      player.x = W / 2;
+      state = 'play';
+      updateHud();
+    }
+
+    function updateHud() {
+      $score.textContent = score;
+      $lives.textContent = lives;
+      $best.textContent = best;
+    }
+
+    function spawn() {
+      const isBomb = Math.random() < 0.25 + Math.min(score / 200, 0.2);
+      items.push({
+        x: 20 + Math.random() * (W - 40),
+        y: -20,
+        r: 14,
+        vy: 2.5 + Math.random() * 1.5 + score / 40,
+        bomb: isBomb,
+      });
+    }
+
+    // Kontrol keyboard
+    addEventListener('keydown', e => {
+      keys[e.key.toLowerCase()] = true;
+      if ((e.key === ' ' || e.key === 'Enter') && state === 'over') reset();
+    });
+    addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+    // Kontrol sentuh / mouse
+    function pointerX(e) {
+      const rect = canvas.getBoundingClientRect();
+      return (e.clientX - rect.left) * (W / rect.width);
+    }
+    canvas.addEventListener('pointerdown', e => {
+      if (state === 'over') { reset(); return; }
+      player.x = pointerX(e);
+    });
+    canvas.addEventListener('pointermove', e => {
+      if (e.buttons || e.pointerType === 'touch') player.x = pointerX(e);
+    });
+
+    function update() {
+      if (state !== 'play') return;
+
+      if (keys['arrowleft'] || keys['a']) player.x -= player.speed;
+      if (keys['arrowright'] || keys['d']) player.x += player.speed;
+      player.x = Math.max(player.w / 2, Math.min(W - player.w / 2, player.x));
+
+      spawnTimer--;
+      if (spawnTimer <= 0) {
+        spawn();
+        spawnTimer = Math.max(18, 50 - score);
+      }
+
+      for (const it of items) {
+        it.y += it.vy;
+        const hit =
+          it.y + it.r >= player.y &&
+          it.y - it.r <= player.y + player.h &&
+          Math.abs(it.x - player.x) <= player.w / 2 + it.r;
+
+        if (hit) {
+          it.dead = true;
+          if (it.bomb) lives--; else score++;
+        } else if (it.y - it.r > H) {
+          it.dead = true;
+        }
+      }
+      items = items.filter(it => !it.dead);
+
+      if (lives <= 0) {
+        state = 'over';
+        if (score > best) {
+          best = score;
+          try { localStorage.setItem('tangkap-bintang-best', best); } catch (e) {}
+        }
+      }
+      updateHud();
+    }
+
+    function drawStar(x, y, r) {
+      ctx.beginPath();
+      for (let i = 0; i < 10; i++) {
+        const a = (Math.PI / 5) * i - Math.PI / 2;
+        const rr = i % 2 === 0 ? r : r / 2.3;
+        ctx.lineTo(x + Math.cos(a) * rr, y + Math.sin(a) * rr);
+      }
+      ctx.closePath();
+      ctx.fillStyle = '#ffd84d';
+      ctx.fill();
+    }
+
+    function drawBomb(x, y, r) {
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fillStyle = '#e5484d';
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 16px system-ui';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('!', x, y + 1);
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, W, H);
+
+      for (const it of items) {
+        it.bomb ? drawBomb(it.x, it.y, it.r) : drawStar(it.x, it.y, it.r);
+      }
+
+      // Player
+      ctx.fillStyle = '#5ee6c9';
+      ctx.beginPath();
+      ctx.roundRect(player.x - player.w / 2, player.y, player.w, player.h, 8);
+      ctx.fill();
+
+      if (state === 'over') {
+        ctx.fillStyle = 'rgba(0,0,0,.6)';
+        ctx.fillRect(0, 0, W, H);
+        ctx.fillStyle = '#fff';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = 'bold 40px system-ui';
+        ctx.fillText('Game Over', W / 2, H / 2 - 30);
+        ctx.font = '20px system-ui';
+        ctx.fillText('Skor: ' + score, W / 2, H / 2 + 15);
+        ctx.font = '16px system-ui';
+        ctx.fillText('Tekan Spasi / tap untuk main lagi', W / 2, H / 2 + 55);
+      }
+    }
+
+    function loop() {
+      update();
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    reset();
+    loop();
+  </script>
+</body>
+</html>
